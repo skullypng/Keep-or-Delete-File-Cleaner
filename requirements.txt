@@ -1,0 +1,3 @@
+# Optional, but needed for previews (the app still runs without them)
+pillow
+opencv-python
