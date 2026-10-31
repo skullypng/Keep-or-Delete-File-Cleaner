@@ -7,10 +7,12 @@ Controls:
   Z                = undo the last decision
   Space            = play / stop video (muted)
   O                = open the file in the default program (e.g. video with sound)
-  L                = switch language (German / English)
+  L                = next language (or click the language button)
 
 The language is asked on first start and saved in ~/.keep_or_delete.json
 (delete that file to see the language selection again).
+
+Translations are JSON files in the locales/ folder; see CONTRIBUTING.md.
 
 Previews:
   Images:  pip install pillow
@@ -64,69 +66,46 @@ COLORS = {
 }
 
 # ---------- Translations ----------
+# Every language is a JSON file in the "locales" folder (en.json, de.json, ...).
+# To add a language, copy en.json, translate the values and save it under a new
+# name: no code changes needed. See CONTRIBUTING.md.
 
-STRINGS = {
-    "en": {
-        "window_title": "Keep or Delete",
-        "delete_btn": "← Delete (D)",
-        "keep_btn": "Keep (K) →",
-        "undo_btn": "Undo (Z)",
-        "play_btn": "Play (Space)",
-        "stop_btn": "Stop (Space)",
-        "open_btn": "Open externally (O)",
-        "lang_btn": "Auf Deutsch wechseln (L)",
-        "progress": "File {i} of {n}",
-        "kept_label": "Kept: {n}",
-        "deleted_label": "Sorted out: {n}",
-        "no_preview": "No preview available",
-        "no_preview_pillow": "No preview.\nFor this format: pip install pillow",
-        "preview_failed": "Preview not possible",
-        "no_video_preview": "No video preview.\npip install pillow opencv-python",
-        "done_header": "All done!",
-        "done_empty": "No files found in this folder.",
-        "done_stats": "Kept: {kept}   ·   Sorted out: {deleted}",
-        "done_folder": "Sorted-out files are in the '{trash}' folder.\n"
-                       "Nothing was permanently deleted.",
-        "open_trash_btn": "Open '{trash}' folder",
-        "undo_last_btn": "Undo last decision",
-        "close_btn": "Close",
-        "error_title": "Error",
-        "open_error": "Could not open:\n{err}",
-        "move_error": "Could not move '{name}':\n{err}",
-        "restore_error": "Could not restore '{name}':\n{err}",
-        "choose_folder": "Which folder do you want to clean up?",
-    },
-    "de": {
-        "window_title": "Behalten oder Löschen",
-        "delete_btn": "← Löschen (D)",
-        "keep_btn": "Behalten (K) →",
-        "undo_btn": "Rückgängig (Z)",
-        "play_btn": "Abspielen (Leertaste)",
-        "stop_btn": "Stopp (Leertaste)",
-        "open_btn": "Extern öffnen (O)",
-        "lang_btn": "Switch to English (L)",
-        "progress": "Datei {i} von {n}",
-        "kept_label": "Behalten: {n}",
-        "deleted_label": "Aussortiert: {n}",
-        "no_preview": "Keine Vorschau verfügbar",
-        "no_preview_pillow": "Keine Vorschau.\nFür dieses Format: pip install pillow",
-        "preview_failed": "Vorschau nicht möglich",
-        "no_video_preview": "Keine Videovorschau.\npip install pillow opencv-python",
-        "done_header": "Alles erledigt!",
-        "done_empty": "In diesem Ordner liegen keine Dateien.",
-        "done_stats": "Behalten: {kept}   ·   Aussortiert: {deleted}",
-        "done_folder": "Aussortierte Dateien liegen im Ordner '{trash}'.\n"
-                       "Es wurde nichts endgültig gelöscht.",
-        "open_trash_btn": "Ordner '{trash}' öffnen",
-        "undo_last_btn": "Letzte Entscheidung rückgängig",
-        "close_btn": "Schließen",
-        "error_title": "Fehler",
-        "open_error": "Konnte nicht geöffnet werden:\n{err}",
-        "move_error": "'{name}' konnte nicht verschoben werden:\n{err}",
-        "restore_error": "'{name}' konnte nicht wiederhergestellt werden:\n{err}",
-        "choose_folder": "Welchen Ordner willst du aufräumen?",
-    },
-}
+def locales_dir():
+    base = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(base, "locales")
+
+
+def load_languages(directory=None):
+    """Load all locale files. Returns {code: {key: text}}.
+
+    Missing keys in a translation fall back to English, so a partly translated
+    file never crashes the app. Broken files are skipped with a warning.
+    """
+    directory = directory or locales_dir()
+    raw = {}
+    try:
+        filenames = sorted(os.listdir(directory))
+    except OSError:
+        filenames = []
+    for filename in filenames:
+        if not filename.endswith(".json"):
+            continue
+        code = filename[:-5]
+        try:
+            with open(os.path.join(directory, filename), "r",
+                      encoding="utf-8") as f:
+                data = json.load(f)
+        except (OSError, ValueError) as e:
+            print(f"Skipping {filename}: {e}", file=sys.stderr)
+            continue
+        if not isinstance(data, dict) or not data.get("language_name"):
+            print(f"Skipping {filename}: needs a 'language_name'",
+                  file=sys.stderr)
+            continue
+        raw[code] = {k: v for k, v in data.items() if isinstance(v, str)}
+    if "en" not in raw:
+        sys.exit(f"Missing or invalid {os.path.join(directory, 'en.json')}")
+    return {code: {**raw["en"], **table} for code, table in raw.items()}
 
 
 # ---------- Config ----------
@@ -224,31 +203,36 @@ class FlatButton(tk.Label):
         self.bind("<Button-1>", lambda e: self._command())
 
 
-def ask_language(root):
-    """Show a small bilingual dialog. Returns 'de', 'en' or None if closed."""
+def ask_language(root, languages):
+    """Show a small dialog with one button per language.
+
+    Returns the language code, or None if the dialog was closed.
+    """
     c = COLORS
     result = {"lang": None}
 
     dlg = tk.Toplevel(root)
-    dlg.title("Language / Sprache")
+    dlg.title("Language")
     dlg.configure(bg=c["bg"])
-    dlg.geometry("340x170")
     dlg.resizable(False, False)
 
     def choose(code):
         result["lang"] = code
         dlg.destroy()
 
-    tk.Label(dlg, text="Choose your language\nSprache auswählen",
-             bg=c["bg"], fg=c["fg"], font=(FONT, 13)).pack(pady=(22, 16))
-    row = tk.Frame(dlg, bg=c["bg"])
-    row.pack()
-    FlatButton(row, "Deutsch", lambda: choose("de"), c["accent"],
-               c["accent_hover"], font=(FONT, 11, "bold"),
-               width=11).pack(side="left", padx=8)
-    FlatButton(row, "English", lambda: choose("en"), c["accent"],
-               c["accent_hover"], font=(FONT, 11, "bold"),
-               width=11).pack(side="left", padx=8)
+    tk.Label(dlg, text="Choose your language", bg=c["bg"], fg=c["fg"],
+             font=(FONT, 13)).pack(padx=40, pady=(22, 12))
+
+    codes = sorted(languages, key=lambda k: languages[k]["language_name"].lower())
+    columns = 1 if len(codes) <= 8 else 3
+    grid = tk.Frame(dlg, bg=c["bg"])
+    grid.pack(padx=24, pady=(0, 20))
+    for i, code in enumerate(codes):
+        FlatButton(grid, languages[code]["language_name"],
+                   lambda code=code: choose(code), c["accent"],
+                   c["accent_hover"], font=(FONT, 11, "bold"),
+                   width=18).grid(row=i // columns, column=i % columns,
+                                  padx=4, pady=4)
 
     dlg.protocol("WM_DELETE_WINDOW", dlg.destroy)
     dlg.lift()
@@ -261,9 +245,10 @@ def ask_language(root):
 # ---------- Main app ----------
 
 class App:
-    def __init__(self, root, folder, lang, config):
+    def __init__(self, root, folder, languages, lang, config):
         self.root = root
         self.folder = folder
+        self.languages = languages
         self.lang = lang
         self.config = config
         self.trash = os.path.join(folder, TRASH_NAME)
@@ -334,7 +319,7 @@ class App:
         self.folder_lbl = tk.Label(footer, text=shorten(self.folder, 48),
                                    bg=c["bg"], fg=c["muted"], font=(FONT, 9))
         self.folder_lbl.pack(side="left")
-        self.lang_btn = FlatButton(footer, "", self.toggle_language,
+        self.lang_btn = FlatButton(footer, "", self.show_language_menu,
                                    c["neutral"], c["neutral_hover"],
                                    font=(FONT, 9), padx=10, pady=4)
         self.lang_btn.pack(side="right")
@@ -437,14 +422,21 @@ class App:
         bind(("z", "Z"), self.undo)
         bind(("<space>",), self.toggle_play)
         bind(("o", "O"), self.open_external)
-        bind(("l", "L"), self.toggle_language)
+        bind(("l", "L"), self.cycle_language)
         self.root.protocol("WM_DELETE_WINDOW", self.close)
 
     # ---------- Language ----------
 
     def t(self, key, **kwargs):
-        text = STRINGS[self.lang][key]
-        return text.format(**kwargs) if kwargs else text
+        table = self.languages.get(self.lang) or self.languages["en"]
+        text = table.get(key, key)
+        if not kwargs:
+            return text
+        try:
+            return text.format(**kwargs)
+        except (KeyError, IndexError, ValueError):
+            # Broken placeholder in a translation: fall back to English
+            return self.languages["en"].get(key, key).format(**kwargs)
 
     def apply_language(self):
         """Set the text of all widgets in the current language."""
@@ -453,7 +445,8 @@ class App:
         self.keep_btn.config(text=self.t("keep_btn"))
         self.undo_btn.config(text=self.t("undo_btn"))
         self.open_btn.config(text=self.t("open_btn"))
-        self.lang_btn.config(text=self.t("lang_btn"))
+        self.lang_btn.config(text=self.t(
+            "language_btn", name=self.languages[self.lang]["language_name"]))
         self.play_btn.config(
             text=self.t("stop_btn" if self.playing else "play_btn"))
         self.open_trash_btn.config(text=self.t("open_trash_btn", trash=TRASH_NAME))
@@ -463,13 +456,34 @@ class App:
         if self.finished:
             self.render_done()
 
-    def toggle_language(self):
-        self.lang = "de" if self.lang == "en" else "en"
-        self.config["language"] = self.lang
+    def language_codes(self):
+        return sorted(self.languages,
+                      key=lambda k: self.languages[k]["language_name"].lower())
+
+    def set_language(self, code):
+        if code not in self.languages:
+            return
+        self.lang = code
+        self.config["language"] = code
         save_config(self.config)
         self.apply_language()
         if not self.finished and not self.playing:
             self.show_preview()  # hints are translated, too
+
+    def cycle_language(self):
+        codes = self.language_codes()
+        self.set_language(codes[(codes.index(self.lang) + 1) % len(codes)])
+
+    def show_language_menu(self):
+        menu = tk.Menu(self.root, tearoff=0)
+        for code in self.language_codes():
+            menu.add_command(label=self.languages[code]["language_name"],
+                             command=lambda code=code: self.set_language(code))
+        menu.update_idletasks()
+        # The button sits at the bottom, so open the menu upwards
+        x = self.lang_btn.winfo_rootx()
+        y = self.lang_btn.winfo_rooty() - (menu.winfo_reqheight() or 0)
+        menu.tk_popup(x, y)
 
     # ---------- Helpers ----------
 
@@ -779,23 +793,24 @@ class App:
 
 if __name__ == "__main__":
     enable_dpi_awareness()
+    languages = load_languages()
     root = tk.Tk()
     root.withdraw()
 
     config = load_config()
     lang = config.get("language")
-    if lang not in STRINGS:
-        # First start (or broken config): let the user pick a language
-        chosen = ask_language(root)
+    if lang not in languages:
+        # First start (or unknown language in config): let the user pick one
+        chosen = ask_language(root, languages)
         lang = chosen or "en"  # dialog closed -> English, but don't save
         if chosen:
             config["language"] = chosen
             save_config(config)
 
-    folder = filedialog.askdirectory(title=STRINGS[lang]["choose_folder"])
+    folder = filedialog.askdirectory(title=languages[lang]["choose_folder"])
     if folder:
         root.deiconify()
-        App(root, folder, lang, config)
+        App(root, folder, languages, lang, config)
         root.mainloop()
     else:
         root.destroy()
