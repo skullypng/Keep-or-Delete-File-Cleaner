@@ -1,12 +1,12 @@
 {
   "language_name": "English",
   "window_title": "Keep or Delete",
-  "delete_btn": "← Delete (D)",
-  "keep_btn": "Keep (K) →",
-  "undo_btn": "Undo (Z)",
-  "play_btn": "Play (Space)",
-  "stop_btn": "Stop (Space)",
-  "open_btn": "Open externally (O)",
+  "delete_btn": "Delete  ←",
+  "keep_btn": "Keep  →",
+  "undo_btn": "Undo  Z",
+  "play_btn": "Play  Space",
+  "stop_btn": "Stop  Space",
+  "open_btn": "Open  O",
   "progress": "File {i} of {n}",
   "kept_label": "Kept: {n}",
   "deleted_label": "Sorted out: {n}",
@@ -26,5 +26,8 @@
   "move_error": "Could not move '{name}':\n{err}",
   "restore_error": "Could not restore '{name}':\n{err}",
   "choose_folder": "Which folder do you want to clean up?",
-  "language_btn": "Language: {name} (L)"
+  "language_btn": "Language: {name} (L)",
+  "hint_keys": "Arrow keys or D / K to decide, or drag the card with the mouse",
+  "tray_empty": "Nothing yet",
+  "another_btn": "Clean another folder"
 }

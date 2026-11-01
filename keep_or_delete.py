@@ -7,6 +7,7 @@ Controls:
   Z                = undo the last decision
   Space            = play / stop video (muted)
   O                = open the file in the default program (e.g. video with sound)
+  Drag the card    = right to keep, left to delete (like on the website demo)
   L                = next language (or click the language button)
 
 The language is asked on first start and saved in ~/.keep_or_delete.json
@@ -45,22 +46,26 @@ except ImportError:
 TRASH_NAME = "_to_delete"
 CONFIG_PATH = os.path.join(os.path.expanduser("~"), ".keep_or_delete.json")
 IGNORED_NAMES = {"thumbs.db", "desktop.ini"}
+DRAG_THRESHOLD = 110  # pixels the card must be dragged to count as a decision
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".tiff", ".tif"}
 VIDEO_EXTS = {".mp4", ".mov", ".avi", ".mkv", ".webm", ".wmv", ".m4v", ".flv"}
 TK_NATIVE_EXTS = {".png", ".gif"}
 
 FONT = "Helvetica"
 COLORS = {
-    "bg": "#1b1d26",
-    "panel": "#252836",
+    "bg": "#252836",        # window
+    "panel": "#1b1d26",     # stage behind the card
+    "card": "#252836",
+    "field": "#2e3144",     # preview background, chips
+    "border": "#3a3e56",
     "fg": "#eceef5",
-    "muted": "#9498ad",
+    "muted": "#9aa0b8",
     "green": "#2fb67a",
     "green_hover": "#3ccf8e",
     "red": "#e5565b",
     "red_hover": "#f2686d",
-    "neutral": "#353849",
-    "neutral_hover": "#444860",
+    "neutral": "#2e3144",
+    "neutral_hover": "#3a3e56",
     "accent": "#6c8cff",
     "accent_hover": "#8aa3ff",
 }
@@ -151,6 +156,15 @@ def format_duration(seconds):
 
 def shorten(text, max_len):
     return text if len(text) <= max_len else "…" + text[-(max_len - 1):]
+
+
+def shorten_name(name, max_len):
+    """Shorten a file name in the middle but keep the extension."""
+    if len(name) <= max_len:
+        return name
+    stem, ext = os.path.splitext(name)
+    keep = max(1, max_len - len(ext) - 1)
+    return stem[:keep] + "…" + ext
 
 
 def natural_key(name):
@@ -247,23 +261,21 @@ def ask_language(root, languages):
 class App:
     def __init__(self, root, folder, languages, lang, config):
         self.root = root
-        self.folder = folder
         self.languages = languages
         self.lang = lang
         self.config = config
-        self.trash = os.path.join(folder, TRASH_NAME)
-        os.makedirs(self.trash, exist_ok=True)
-
-        self.files = list_files(folder)
-        self.index = 0
-        self.kept = 0
-        self.deleted = 0
-        self.history = []  # dicts: name, action ("keep"/"delete"), trash_path
         self.photo = None  # keep a reference, otherwise the image disappears
         self.finished = False
 
-        # Preview size follows the window size
-        self.preview_w, self.preview_h = 460, 320
+        # Card animation / swipe state
+        self.busy = False
+        self.drag_x = None
+        self.card_offset = 0
+        self.stage_w = 400
+        self.tray_chips = []
+
+        # Preview size follows the card size
+        self.preview_w, self.preview_h = 420, 280
         self.resize_job = None
 
         # Video playback state
@@ -271,10 +283,22 @@ class App:
         self.play_job = None
         self.playing = False
 
+        self.load_folder(folder)
         self.build_ui()
         self.bind_keys()
         self.apply_language()
         self.show()
+
+    def load_folder(self, folder):
+        """(Re)start the session for `folder`."""
+        self.folder = folder
+        self.trash = os.path.join(folder, TRASH_NAME)
+        os.makedirs(self.trash, exist_ok=True)
+        self.files = list_files(folder)
+        self.index = 0
+        self.kept = 0
+        self.deleted = 0
+        self.history = []  # dicts: name, action ("keep"/"delete"), trash_path
 
     # ---------- UI construction ----------
 
@@ -282,8 +306,8 @@ class App:
         c = COLORS
         root = self.root
         root.configure(bg=c["bg"])
-        root.minsize(560, 640)
-        root.geometry("680x780")
+        root.minsize(540, 720)
+        root.geometry("620x840")
 
         style = ttk.Style(root)
         try:
@@ -334,53 +358,86 @@ class App:
         c = COLORS
         self.main_frame = tk.Frame(self.content, bg=c["bg"])
         self.main_frame.pack(fill="both", expand=True)
-        self.main_frame.bind(
-            "<Configure>",
-            lambda e: self.name.config(wraplength=max(200, e.width - 48)))
 
-        # Bottom widgets are packed first so the preview only takes the leftover space
+        # Bottom widgets are packed first so the stage only takes the leftover space
+        self.hint = tk.Label(self.main_frame, bg=c["bg"], fg=c["muted"],
+                             font=(FONT, 9))
+        self.hint.pack(side="bottom", pady=(0, 6))
+
         secondary = tk.Frame(self.main_frame, bg=c["bg"])
-        secondary.pack(side="bottom", pady=(0, 10))
+        secondary.pack(side="bottom", pady=(0, 8))
         self.undo_btn = FlatButton(secondary, "", self.undo, c["neutral"],
                                    c["neutral_hover"], font=(FONT, 10),
-                                   padx=12, pady=6)
+                                   padx=14, pady=7)
         self.undo_btn.pack(side="left", padx=5)
         self.play_btn = FlatButton(secondary, "", self.toggle_play,
                                    c["neutral"], c["neutral_hover"],
-                                   font=(FONT, 10), padx=12, pady=6)
+                                   font=(FONT, 10), padx=14, pady=7)
         self.play_btn.pack(side="left", padx=5)
         self.open_btn = FlatButton(secondary, "", self.open_external,
                                    c["neutral"], c["neutral_hover"],
-                                   font=(FONT, 10), padx=12, pady=6)
+                                   font=(FONT, 10), padx=14, pady=7)
         self.open_btn.pack(side="left", padx=5)
 
-        actions = tk.Frame(self.main_frame, bg=c["bg"])
-        actions.pack(side="bottom", pady=(6, 10))
-        self.delete_btn = FlatButton(actions, "", self.delete, c["red"],
-                                     c["red_hover"], font=(FONT, 13, "bold"),
-                                     width=16)
-        self.delete_btn.pack(side="left", padx=8)
-        self.keep_btn = FlatButton(actions, "", self.keep, c["green"],
-                                   c["green_hover"], font=(FONT, 13, "bold"),
-                                   width=16)
-        self.keep_btn.pack(side="left", padx=8)
+        # Strip that shows what was set aside (like on the website)
+        self.tray = tk.Frame(self.main_frame, bg=c["panel"], height=46)
+        self.tray.pack_propagate(False)
+        self.tray.pack(side="bottom", fill="x", padx=24, pady=(0, 12))
+        tk.Label(self.tray, text=TRASH_NAME, bg=c["panel"], fg=c["red"],
+                 font=("Courier", 10, "bold")).pack(side="left", padx=(12, 10))
+        self.tray_items = tk.Frame(self.tray, bg=c["panel"])
+        self.tray_items.pack(side="left", fill="y")
 
-        self.info = tk.Label(self.main_frame, bg=c["bg"], fg=c["muted"],
-                             font=(FONT, 11))
-        self.info.pack(side="bottom")
-        self.name = tk.Label(self.main_frame, bg=c["bg"], fg=c["fg"],
-                             font=(FONT, 14, "bold"), wraplength=560)
+        actions = tk.Frame(self.main_frame, bg=c["bg"])
+        actions.pack(side="bottom", fill="x", padx=24, pady=(8, 12))
+        self.delete_btn = FlatButton(actions, "", self.delete, c["red"],
+                                     c["red_hover"], font=(FONT, 14, "bold"),
+                                     pady=13)
+        self.delete_btn.pack(side="left", expand=True, fill="x", padx=(0, 6))
+        self.keep_btn = FlatButton(actions, "", self.keep, c["green"],
+                                   c["green_hover"], font=(FONT, 14, "bold"),
+                                   pady=13)
+        self.keep_btn.pack(side="left", expand=True, fill="x", padx=(6, 0))
+
+        # Stage with the card; its border glows green/red while you drag
+        self.stage = tk.Frame(self.main_frame, bg=c["panel"],
+                              highlightthickness=2,
+                              highlightbackground=c["panel"],
+                              highlightcolor=c["panel"])
+        self.stage.pack(fill="both", expand=True, padx=24, pady=(14, 12))
+        self.stage.bind("<Configure>", self.on_stage_resize)
+
+        self.card = tk.Frame(self.stage, bg=c["card"], highlightthickness=1,
+                             highlightbackground=c["border"])
+        self.card.place(relx=0.5, rely=0.5, relwidth=0.86, relheight=0.92,
+                        anchor="center")
+        self.card.bind(
+            "<Configure>",
+            lambda e: self.name.config(wraplength=max(120, e.width - 32)))
+
+        self.info = tk.Label(self.card, bg=c["card"], fg=c["muted"],
+                             font=(FONT, 10))
+        self.info.pack(side="bottom", pady=(0, 12))
+        self.name = tk.Label(self.card, bg=c["card"], fg=c["fg"],
+                             font=(FONT, 13, "bold"), wraplength=380)
         self.name.pack(side="bottom", pady=(10, 2))
 
-        # Preview panel: fixed requested size, grows with the window
-        self.preview_box = tk.Frame(self.main_frame, bg=c["panel"],
-                                    width=200, height=150)
+        # Preview area: fixed requested size, grows with the card
+        self.preview_box = tk.Frame(self.card, bg=c["field"], width=200,
+                                    height=150)
         self.preview_box.pack_propagate(False)
-        self.preview_box.pack(fill="both", expand=True, padx=24, pady=(14, 4))
+        self.preview_box.pack(fill="both", expand=True, padx=10, pady=(10, 0))
         self.preview_box.bind("<Configure>", self.on_preview_resize)
-        self.preview = tk.Label(self.preview_box, bg=c["panel"], fg=c["muted"],
+        self.preview = tk.Label(self.preview_box, bg=c["field"], fg=c["muted"],
                                 font=(FONT, 12), justify="center")
         self.preview.place(relx=0.5, rely=0.5, anchor="center")
+
+        # Dragging works from anywhere on the card
+        for widget in (self.card, self.preview_box, self.preview, self.name,
+                       self.info):
+            widget.bind("<ButtonPress-1>", self.drag_start)
+            widget.bind("<B1-Motion>", self.drag_move)
+            widget.bind("<ButtonRelease-1>", self.drag_end)
 
     def build_done_frame(self):
         c = COLORS
@@ -400,15 +457,19 @@ class App:
 
         self.open_trash_btn = FlatButton(inner, "", self.open_trash,
                                          c["accent"], c["accent_hover"],
-                                         font=(FONT, 12, "bold"), width=28)
+                                         font=(FONT, 12, "bold"), width=30)
         self.open_trash_btn.pack(pady=5)
+        self.another_btn = FlatButton(inner, "", self.choose_another_folder,
+                                      c["neutral"], c["neutral_hover"],
+                                      font=(FONT, 11), width=30)
+        self.another_btn.pack(pady=5)
         self.undo_last_btn = FlatButton(inner, "", self.undo, c["neutral"],
                                         c["neutral_hover"], font=(FONT, 11),
-                                        width=28)
+                                        width=30)
         self.undo_last_btn.pack(pady=5)
         self.close_btn = FlatButton(inner, "", self.close, c["neutral"],
                                     c["neutral_hover"], font=(FONT, 11),
-                                    width=28)
+                                    width=30)
         self.close_btn.pack(pady=5)
 
     def bind_keys(self):
@@ -452,7 +513,10 @@ class App:
         self.open_trash_btn.config(text=self.t("open_trash_btn", trash=TRASH_NAME))
         self.undo_last_btn.config(text=self.t("undo_last_btn"))
         self.close_btn.config(text=self.t("close_btn"))
+        self.another_btn.config(text=self.t("another_btn"))
+        self.hint.config(text=self.t("hint_keys"))
         self.update_header()
+        self.update_tray()
         if self.finished:
             self.render_done()
 
@@ -726,23 +790,120 @@ class App:
             return
         self.show_main()
         self.update_header()
+        self.update_tray()
         self.name.config(text=self.files[self.index])
         self.show_preview()
+
+    # ---------- Card animation, swipe, tray ----------
+
+    def on_stage_resize(self, event):
+        self.stage_w = event.width
+
+    def set_card_offset(self, x):
+        self.card_offset = x
+        self.card.place_configure(x=int(x))
+
+    def set_glow(self, direction):
+        c = COLORS
+        color = (c["green"] if direction > 0
+                 else c["red"] if direction < 0 else c["panel"])
+        self.stage.config(highlightbackground=color)
+
+    def animate_card(self, direction):
+        """Slide the card out of the stage (+1 = right, -1 = left), then show the next file."""
+        self.busy = True
+        start = self.card_offset
+        target = direction * max(self.stage_w, 320)
+        frames = 9
+
+        def step(n):
+            t = n / frames
+            eased = 1 - (1 - t) ** 3
+            self.set_card_offset(start + (target - start) * eased)
+            if n < frames:
+                self.root.after(16, lambda: step(n + 1))
+            else:
+                self.set_card_offset(0)
+                self.set_glow(0)
+                self.busy = False
+                self.show()
+
+        step(1)
+
+    def drag_start(self, event):
+        if self.finished or self.busy:
+            return
+        self.drag_x = event.x_root
+
+    def drag_move(self, event):
+        if self.drag_x is None:
+            return
+        dx = event.x_root - self.drag_x
+        self.set_card_offset(dx)
+        self.set_glow(1 if dx > 40 else -1 if dx < -40 else 0)
+
+    def drag_end(self, event):
+        if self.drag_x is None:
+            return
+        dx = event.x_root - self.drag_x
+        self.drag_x = None
+        self.set_glow(0)
+        if dx > DRAG_THRESHOLD:
+            self.keep()
+        elif dx < -DRAG_THRESHOLD:
+            self.delete()
+        else:
+            self.set_card_offset(0)  # not far enough: snap back
+
+    def update_tray(self):
+        """Show the most recent sorted-out files in the strip below the buttons."""
+        c = COLORS
+        for chip in self.tray_chips:
+            chip.destroy()
+        self.tray_chips = []
+
+        names = [h["name"] for h in self.history if h["action"] == "delete"]
+        labels = []  # (text, is_chip)
+        if not names:
+            labels.append((self.t("tray_empty"), False))
+        else:
+            if len(names) > 3:
+                labels.append((f"+{len(names) - 3}", False))
+            labels.extend((shorten_name(n, 20), True) for n in names[-3:])
+
+        for text, is_chip in labels:
+            chip = tk.Label(self.tray_items, text=text, font=(FONT, 9),
+                            bg=c["field"] if is_chip else c["panel"],
+                            fg=c["fg"] if is_chip else c["muted"],
+                            padx=8 if is_chip else 0, pady=2)
+            chip.pack(side="left", padx=(0, 6), pady=10)
+            self.tray_chips.append(chip)
+
+    def choose_another_folder(self):
+        self.stop_video()
+        folder = filedialog.askdirectory(
+            title=self.t("choose_folder"),
+            initialdir=os.path.dirname(self.folder) or None)
+        if not folder:
+            return
+        self.load_folder(folder)
+        self.folder_lbl.config(text=shorten(folder, 48))
+        self.show()
 
     # ---------- Decisions ----------
 
     def keep(self):
-        if self.finished:
+        if self.finished or self.busy:
             return
         self.stop_video()
         self.history.append({"name": self.files[self.index],
                              "action": "keep", "trash_path": None})
         self.kept += 1
         self.index += 1
-        self.show()
+        self.animate_card(1)
 
     def delete(self):
-        if self.finished:
+        if self.finished or self.busy:
             return
         self.stop_video()
         name = self.files[self.index]
@@ -752,6 +913,7 @@ class App:
         try:
             shutil.move(self.current_path(), target)
         except Exception as e:
+            self.set_card_offset(0)  # a dragged card snaps back
             messagebox.showerror(self.t("error_title"),
                                  self.t("move_error", name=name, err=e))
             return
@@ -759,10 +921,10 @@ class App:
                              "trash_path": target})
         self.deleted += 1
         self.index += 1
-        self.show()
+        self.animate_card(-1)
 
     def undo(self):
-        if not self.history:
+        if not self.history or self.busy:
             return
         self.stop_video()
         entry = self.history[-1]

@@ -1,12 +1,12 @@
 {
   "language_name": "Deutsch",
   "window_title": "Behalten oder Löschen",
-  "delete_btn": "← Löschen (D)",
-  "keep_btn": "Behalten (K) →",
-  "undo_btn": "Rückgängig (Z)",
-  "play_btn": "Abspielen (Leertaste)",
-  "stop_btn": "Stopp (Leertaste)",
-  "open_btn": "Extern öffnen (O)",
+  "delete_btn": "Löschen  ←",
+  "keep_btn": "Behalten  →",
+  "undo_btn": "Rückgängig  Z",
+  "play_btn": "Abspielen  Leertaste",
+  "stop_btn": "Stopp  Leertaste",
+  "open_btn": "Öffnen  O",
   "progress": "Datei {i} von {n}",
   "kept_label": "Behalten: {n}",
   "deleted_label": "Aussortiert: {n}",
@@ -26,5 +26,8 @@
   "move_error": "'{name}' konnte nicht verschoben werden:\n{err}",
   "restore_error": "'{name}' konnte nicht wiederhergestellt werden:\n{err}",
   "choose_folder": "Welchen Ordner willst du aufräumen?",
-  "language_btn": "Sprache: {name} (L)"
+  "language_btn": "Sprache: {name} (L)",
+  "hint_keys": "Pfeiltasten oder D / K zum Entscheiden, oder die Karte mit der Maus ziehen",
+  "tray_empty": "Noch nichts",
+  "another_btn": "Anderen Ordner aufräumen"
 }

@@ -11,6 +11,7 @@ you can review afterwards.
 - Video preview with still frame, duration and resolution; muted playback in the window
 - Undo for every decision, even after the last file
 - Progress bar and live counters
+- Card-style interface: drag the card like in the demo on the website, and a `_to_delete` strip shows what you set aside
 - Resizable window, dark theme
 - **Translatable interface** — English and German included, more languages welcome (see below)
 
@@ -38,6 +39,7 @@ PNG and GIF images.
 | `Z`             | Undo the last decision                        |
 | `Space`         | Play / stop video (muted)                     |
 | `O`             | Open the file in the default program          |
+| Drag the card   | Right = keep, left = delete                   |
 | `L`             | Switch to the next language                   |
 
 ## Languages
